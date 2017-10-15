@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+
+<head>
+    <title>Amazon Dash Detection</title>
+    <style>
+        #arp-table {
+            font-family: "Consolas";
+        }
+    </style>
+</head>
+
+<body>
+    <button id="start-btn" type="button">Start</button>
+    <button id="stop-btn" type="button">Stop</button>
+    <pre id="ip-table"></pre>
+    <pre id="arp-table"></pre>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://code.jquery.com/jquery-1.11.1.js"></script>
+    <script>
+        $(function () {
+            var socket = io();
+
+            socket.on('ip-table', function (msg) {
+                $('#ip-table').text(msg);
+            });
+            
+            socket.on('arp-table', function (msg) {
+                $('#arp-table').text(msg);
+            });
+
+            $("#start-btn").click(function(){
+                $('#ip-table').text("");
+                $('#arp-table').text("");
+                socket.emit('start-poll', null);
+            });
+
+            $("#stop-btn").click(function () {
+                socket.emit('stop-poll', null);
+            });
+        });
+    </script>
+</body>
+
+</html>

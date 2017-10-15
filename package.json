@@ -1,0 +1,20 @@
+{
+  "name": "dash-server",
+  "version": "0.0.1",
+  "description": "Server to detect Amazon Dash button",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.15.2",
+    "node-cmd": "^3.0.0",
+    "socket.io": "^2.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^8.0.34"
+  }
+}
