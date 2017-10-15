@@ -5,66 +5,71 @@ var cmd = require('node-cmd');
 app.get('/', function (req, res) {
     res.sendFile(__dirname + '/index.html');
 });
-// io.on('connection', function (socket) {
-//     socket.on('chat message', function (msg) {
-//         io.emit('chat message', msg);
-//     });
-// });
 http.listen(3000, function () {
     console.log('listening on *:3000');
 });
-var poll = function (counter) {
-    cmd.get('arp -a', function (err, data, stderr) {
-        var message = "Attempt: " + counter + "\r\n" + data;
-        io.emit("arp-table", message);
-        var splitData = data.split("\r\n")
-            .map(function (item) { return item.trim(); })
-            .map(function (item) { return item.split(" ").filter(function (t) { return t.trim() !== ""; }); })
-            .filter(function (t2) { return t2.length === 3; });
-        console.log(splitData);
+var amazonMacAddr = [
+    "74-C2-46-",
+    "F0-D2-F1-",
+    "0C-47-C9-",
+    "44-65-0D-",
+    "50-F5-DA-",
+    "74-75-48-",
+    "84-D6-D0-",
+    "F0-27-2D-",
+    "A0-02-DC-",
+    "AC-63-BE-"
+];
+var detectedMacAddr = [];
+var isDashButton = function (macAddr) {
+    return amazonMacAddr.some(function (amzMacAddr) {
+        return macAddr.toUpperCase().indexOf(amzMacAddr) === 0;
     });
 };
-var counter = 0;
-var maxCounter = 1;
-var tickFcn = function () {
-    setTimeout(function () {
-        poll(counter);
-        if (counter < maxCounter) {
-            counter++;
-            tickFcn();
-        }
-    }, 10);
-};
-var iplist = [];
-var recursivePing = function (addr) {
-    var ipaddress = "192.168.0." + addr;
-    cmd.get("ping " + ipaddress + " -n 1", function (err, data, stderr) {
-        iplist[addr] = true;
+var poll = function () {
+    cmd.get('arp -a', function (err, data, stderr) {
+        detectedMacAddr = data.split("\r\n")
+            .map(function (item) { return item.trim(); })
+            .map(function (item) { return item.split(" ").filter(function (item) { return item.trim() !== ""; }); })
+            .filter(function (item) { return item.length === 3; })
+            .map(function (item) {
+            return {
+                ipAddr: item[0],
+                macAddr: item[1],
+                isDashButton: isDashButton(item[1])
+            };
+        });
+        var sb = [];
+        detectedMacAddr.forEach(function (item) {
+            sb.push(item.ipAddr + " : " + item.macAddr + " " + (item.isDashButton ? "<-" : ""));
+        });
+        io.emit("arp-table", sb.join('\r\n'));
     });
 };
 var start = function () {
-    iplist = [];
-    for (var i = 0; i < 255; i++) {
-        iplist.push(false);
-        recursivePing(i);
-    }
-    // var count = iplist.filter(function (item) { return item; }).length;
-    // while (count < 255) {
-    //     io.emit("ip-table", count + " of 255");
-    //     count = iplist.filter(function (item) { return item; }).length;
-    // }
-    setTimeout(function () {
-        var count = iplist.filter(function (item) { return item; }).length;
-        io.emit("ip-table", count + " of 255");
-        poll(1);
-    }, 10000);
+    var checkPing = function (i) {
+        var ipaddress = "192.168.0." + i;
+        cmd.get("ping " + ipaddress + " -n 1", function (err, data, stderr) {
+            io.emit("ip-table", i + " of 255");
+            if (i === 255) {
+                setTimeout(function () {
+                    io.emit("ip-table", "Ping Sweep Complete");
+                    poll();
+                }, 500);
+            }
+        });
+        if (i < 255) {
+            setTimeout(function () {
+                checkPing(i + 1);
+            }, 100);
+        }
+    };
+    checkPing(0);
 };
 io.on('connection', function (socket) {
     socket.on('start-poll', function (msg) {
+        console.log("start pressed");
         start();
     });
-    socket.on('stop-poll', function (msg) {
-        counter = maxCounter;
-    });
 });
-// https://github.com/fiveseven808/AmazonDashButtonHack/blob/master/src/AmazonButton_Discovery_160715_2304.ahk 
+//# sourceMappingURL=app.js.map

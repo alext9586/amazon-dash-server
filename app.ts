@@ -7,84 +7,93 @@ app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
-// io.on('connection', function (socket) {
-//     socket.on('chat message', function (msg) {
-//         io.emit('chat message', msg);
-//     });
-// });
-
 http.listen(3000, () => {
     console.log('listening on *:3000');
 });
 
-var poll = (counter) => {
+// https://github.com/fiveseven808/AmazonDashButtonHack/blob/master/src/AmazonButton_Discovery_160715_2304.ahk
+
+interface IArp {
+    ipAddr: string;
+    macAddr: string;
+    isDashButton: boolean;
+}
+
+var amazonMacAddr: string[] = [
+    "74-C2-46-",
+    "F0-D2-F1-",
+    "0C-47-C9-",
+    "44-65-0D-",
+    "50-F5-DA-",
+    "74-75-48-",
+    "84-D6-D0-",
+    "F0-27-2D-",
+    "A0-02-DC-",
+    "AC-63-BE-"
+];
+
+var detectedMacAddr: IArp[] = [];
+
+var isDashButton = (macAddr: string): boolean => {
+    return amazonMacAddr.some(amzMacAddr => {
+        return macAddr.toUpperCase().indexOf(amzMacAddr) === 0;
+    });
+};
+
+var poll = () => {
     cmd.get(
         'arp -a',
         (err, data, stderr) => {
-            var message = "Attempt: " + counter + "\r\n" + data;
-            io.emit("arp-table", message);
-            var splitData = data.split("\r\n")
-                .map(item=>item.trim())
-                .map(item => item.split(" ").filter(t => t.trim() !== ""))
-                .filter(t2 => t2.length === 3);
+            detectedMacAddr = data.split("\r\n")
+                .map(item => item.trim())
+                .map(item => item.split(" ").filter(item => item.trim() !== ""))
+                .filter(item => item.length === 3)
+                .map((item) => {
+                    return <IArp>{
+                        ipAddr: item[0],
+                        macAddr: item[1],
+                        isDashButton: isDashButton(item[1])
+                    }
+                });
             
-            console.log(splitData);
+            var sb: string[] = [];
+            detectedMacAddr.forEach((item) => {
+                sb.push(`${item.ipAddr} : ${item.macAddr} ${item.isDashButton ? "<-" : ""}`)
+            });
+            io.emit("arp-table", sb.join('\r\n'));
         }
     );
 };
 
-var counter = 0;
-var maxCounter = 1;
+var start = (): void => {
+    var checkPing = (i) => {
+        var ipaddress = "192.168.0." + i;
+        cmd.get(
+            "ping " + ipaddress + " -n 1",
+            (err, data, stderr) => {
+                io.emit("ip-table", i + " of 255");
+                if (i === 255) {
+                    setTimeout(() => {
+                        io.emit("ip-table", "Ping Sweep Complete");
+                        poll();
+                    }, 500);
+                }
+            }
+        );
 
-var tickFcn = () =>  {
-    setTimeout(() =>  {
-        poll(counter);
-        if (counter < maxCounter) {
-            counter++;
-            tickFcn();
+        if (i < 255) {
+            setTimeout(() => {
+                checkPing(i + 1);
+            }, 100);
         }
-     }, 10);
+    };
+
+    checkPing(0);
 };
-
-var iplist = [];
-var recursivePing = (addr) => {
-    var ipaddress = "192.168.0." + addr;
-    cmd.get(
-        "ping " + ipaddress + " -n 1",
-        (err, data, stderr) => {
-            iplist[addr] = true;
-        }
-    );
-};
-
-var start = () =>  {
-    iplist = [];
-    for (var i = 0; i < 255; i++) {
-        iplist.push(false);
-        recursivePing(i);
-    }
-
-    // var count = iplist.filter(function (item) { return item; }).length;
-    // while (count < 255) {
-    //     io.emit("ip-table", count + " of 255");
-    //     count = iplist.filter(function (item) { return item; }).length;
-    // }
-    setTimeout(() =>  {
-        var count = iplist.filter(item => item).length;
-        io.emit("ip-table", count + " of 255");
-        poll(1);
-    }, 10000);
-};
-
 
 io.on('connection', (socket) => {
-    socket.on('start-poll', function (msg) {
+    socket.on('start-poll', (msg) => {
+        console.log("start pressed");
         start();
     });
-
-    socket.on('stop-poll', (msg) => {
-        counter = maxCounter;
-    });
 });
-
-// https://github.com/fiveseven808/AmazonDashButtonHack/blob/master/src/AmazonButton_Discovery_160715_2304.ahk
