@@ -93,4 +93,38 @@ network.get_gateway_ip(function (err, ip) {
         dashDetect = new DashDetect(io, ip);
     }
 });
+/* what the fuck
+https://github.com/oneillsp96/node-amazon-dash-button-windows
+*/
+// var Cap = require('cap').Cap,
+//     decoders = require('cap').decoders,
+//     PROTOCOL = decoders.PROTOCOL;
+// var c = new Cap(),
+//     device = Cap.findDevice(),
+//     filter = 'arp',
+//     bufSize = 10 * 1024 * 1024,
+//     buffer = new Buffer(65535);
+// var linkType = c.open(device, filter, bufSize, buffer);
+// c.setMinBytes && c.setMinBytes(0);
+// var just_emitted = {};
+// just_emitted = false;
+// c.on('packet', function (nbytes, trunc) {
+//     console.log('packet: length ' + nbytes + ' bytes, truncated? '
+//         + (trunc ? 'yes' : 'no'));
+//     if (linkType === 'ETHERNET') {
+//         var ret = decoders.Ethernet(buffer);
+//         // console.log("protocol: " + PROTOCOL.ETHERNET[ret.info.type]);
+//         if (ret.info.type === PROTOCOL.ETHERNET.ARP) {
+//             // console.log('Decoding ARP ...');
+//             // console.log("srcmac " + ret.info.srcmac);
+//         }
+//         if (ret.info.srcmac === "44:65:0d:0d:70:73") {
+//             if (!just_emitted) {
+//                 console.log("amazon dash button pressed");
+//                 just_emitted = true;
+//                 setTimeout(function () { just_emitted = false; }, 3000); //sometimes one click triggers 2 or more ARP requests, this prevents multiple actions taking placep
+//             }
+//         }
+//     }
+// }); 
 //# sourceMappingURL=app.js.map
