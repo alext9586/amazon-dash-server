@@ -2,6 +2,7 @@ var app = require('express')();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
 var cmd = require('node-cmd');
+var network = require('network');
 
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
@@ -19,63 +20,77 @@ interface IArp {
     isDashButton: boolean;
 }
 
-var amazonMacAddr: string[] = [
-    "74-C2-46-",
-    "F0-D2-F1-",
-    "0C-47-C9-",
-    "44-65-0D-",
-    "50-F5-DA-",
-    "74-75-48-",
-    "84-D6-D0-",
-    "F0-27-2D-",
-    "A0-02-DC-",
-    "AC-63-BE-"
-];
+class DashDetect{
+    private amazonMacAddr: string[] = [
+        "74-C2-46-",
+        "F0-D2-F1-",
+        "0C-47-C9-",
+        "44-65-0D-",
+        "50-F5-DA-",
+        "74-75-48-",
+        "84-D6-D0-",
+        "F0-27-2D-",
+        "A0-02-DC-",
+        "AC-63-BE-"
+    ];
 
-var detectedMacAddr: IArp[] = [];
+    private detectedMacAddr: IArp[] = [];
+    private maskedIp: string = "";
 
-var isDashButton = (macAddr: string): boolean => {
-    return amazonMacAddr.some(amzMacAddr => {
-        return macAddr.toUpperCase().indexOf(amzMacAddr) === 0;
-    });
-};
+    constructor(private socket, private gatewayIp: string) {
+        var maskedIpLength = gatewayIp.lastIndexOf(".") + 1;
+        this.maskedIp = gatewayIp.substr(0, maskedIpLength);
 
-var poll = () => {
-    cmd.get(
-        'arp -a',
-        (err, data, stderr) => {
-            detectedMacAddr = data.split("\r\n")
-                .map(item => item.trim())
-                .map(item => item.split(" ").filter(item => item.trim() !== ""))
-                .filter(item => item.length === 3)
-                .map((item) => {
-                    return <IArp>{
-                        ipAddr: item[0],
-                        macAddr: item[1],
-                        isDashButton: isDashButton(item[1])
-                    }
-                });
-            
-            var sb: string[] = [];
-            detectedMacAddr.forEach((item) => {
-                sb.push(`${item.ipAddr} : ${item.macAddr} ${item.isDashButton ? "<-" : ""}`)
+        socket.on('connection', (sock) => {
+            sock.on('start-poll', (msg) => {
+                console.log("start pressed");
+                dashDetect.start();
             });
-            io.emit("arp-table", sb.join('\r\n'));
-        }
-    );
-};
+        });
+    }
 
-var start = (): void => {
-    var checkPing = (i) => {
-        var ipaddress = "192.168.0." + i;
+    private isDashButton(macAddr: string): boolean {
+        return this.amazonMacAddr.some(amzMacAddr => {
+            return macAddr.toUpperCase().indexOf(amzMacAddr) === 0;
+        });
+    }
+
+    private poll() {
+        cmd.get(
+            'arp -a',
+            (err, data, stderr) => {
+                this.detectedMacAddr = data.split("\r\n")
+                    .map(item => item.trim())
+                    .map(item => item.split(" ").filter(item => item.trim() !== ""))
+                    .filter(item => item.length === 3)
+                    .map((item) => {
+                        return <IArp>{
+                            ipAddr: item[0],
+                            macAddr: item[1],
+                            isDashButton: this.isDashButton(item[1])
+                        }
+                    })
+                    .filter(item => item.ipAddr.indexOf(this.maskedIp) !== -1);
+
+                var sb: string[] = [];
+                this.detectedMacAddr.forEach((item) => {
+                    sb.push(`${item.ipAddr} : ${item.macAddr} ${item.isDashButton ? "<- Amazon Device" : ""}`)
+                });
+                this.socket.emit("arp-table", sb.join('\r\n'));
+            }
+        );
+    }
+
+    private checkPing(i): void {
+        var ipaddress = this.maskedIp + i;
         cmd.get(
             "ping " + ipaddress + " -n 1",
             (err, data, stderr) => {
-                io.emit("ip-table", i + " of 255");
+                this.socket.emit("ip-table", i + " of 255");
                 if (i === 255) {
                     setTimeout(() => {
-                        io.emit("ip-table", "Ping Sweep Complete");
-                        poll();
+                        this.socket.emit("ip-table", "Ping Sweep Complete");
+                        this.poll();
                     }, 500);
                 }
             }
@@ -83,17 +98,21 @@ var start = (): void => {
 
         if (i < 255) {
             setTimeout(() => {
-                checkPing(i + 1);
+                this.checkPing(i + 1);
             }, 100);
         }
-    };
+    }
 
-    checkPing(0);
-};
+    public start(): void {
+        this.checkPing(0);
+    }
+}
 
-io.on('connection', (socket) => {
-    socket.on('start-poll', (msg) => {
-        console.log("start pressed");
-        start();
-    });
+var dashDetect;
+network.get_gateway_ip((err, ip) => {
+    console.log(err || ip); // err may be 'No active network interface found.'
+
+    if (!err) {
+        dashDetect = new DashDetect(io, ip);
+    }    
 });

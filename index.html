@@ -4,6 +4,11 @@
 <head>
     <title>Amazon Dash Detection</title>
     <style>
+        body {
+            font-family: "Calibri", Arial, Helvetica, sans-serif;
+        }
+
+        #ip-table,
         #arp-table {
             font-family: "Consolas";
         }
@@ -11,8 +16,11 @@
 </head>
 
 <body>
-    <button id="start-btn" type="button">Start</button>
-    <button id="stop-btn" type="button">Stop</button>
+    <p>Press Start and rapidly press the Dash button to keep light white.</p>
+    <p>It's OK if it goes red. Just keep spamming the Dash button.</p>
+    <button id="start-btn" type="button">
+        <h1>Start</h1>
+    </button>
     <pre id="ip-table"></pre>
     <pre id="arp-table"></pre>
 
@@ -34,10 +42,6 @@
                 $('#ip-table').text("");
                 $('#arp-table').text("");
                 socket.emit('start-poll', null);
-            });
-
-            $("#stop-btn").click(function () {
-                socket.emit('stop-poll', null);
             });
         });
     </script>
