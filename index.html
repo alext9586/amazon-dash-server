@@ -12,10 +12,36 @@
         #arp-table {
             font-family: "Consolas";
         }
+
+        .dash-button-light {
+            text-align: center;
+            border: 2px solid gray;
+            background-color: #0b5345;
+            text-shadow: 2px 2px 5px black;
+            color: #7b7d7d;
+            padding: 0 2em;
+            margin: 0 1em;
+        }
+
+        .dash-button-light.active {
+            background-color: #2ecc71;
+            color:  #fbfcfc;
+        }
+
+        .light-panel {
+            margin: 1em -1em;
+            padding: 1em;
+            display: flex;
+            justify-content: flex-start;
+            align-items: stretch;
+            background-color: #2e4053;
+        }
     </style>
 </head>
 
 <body>
+    <label>Subnet Start:<input type="text" id="subnetStart" /></label>
+    <label>Subnet End:<input type="text" id="subnetEnd" /></label>
     <p>Press Start and rapidly press the Dash button to keep light white.</p>
     <p>It's OK if it goes red. Just keep spamming the Dash button.</p>
     <button id="start-btn" type="button">
@@ -23,6 +49,29 @@
     </button>
     <pre id="ip-table"></pre>
     <pre id="arp-table"></pre>
+
+    <hr />
+
+    <label>Watch IP Address:
+        <input type="text" id="watchIpAddress" />
+    </label>
+
+    <button id="watch-start-btn" type="button">
+        <h1>Start Watch</h1>
+    </button>
+
+    <button id="watch-stop-btn" type="button">
+        <h1>Stop Watch</h1>
+    </button>
+
+    <div class="light-panel">
+        <div id="watch-light" class="dash-button-light">
+            <h2>Watching</h2>
+        </div>
+        <div id="pressed-light" class="dash-button-light">
+            <h2>Pressed</h2>
+        </div>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://code.jquery.com/jquery-1.11.1.js"></script>
@@ -38,10 +87,44 @@
                 $('#arp-table').text(msg);
             });
 
-            $("#start-btn").click(function(){
-                $('#ip-table').text("");
-                $('#arp-table').text("");
-                socket.emit('start-poll', null);
+            socket.on('dash-button-pressed', function (msg) {
+                console.log("dash button pressed");
+                $('#pressed-light').addClass('active');
+                setTimeout(function() {
+                    $('#pressed-light').removeClass('active');
+                }, 1000);
+            })
+
+            $("#start-btn").click(function() {
+                $.post("/start", {
+                    subnetStart: $('#subnetStart')[0].value,
+                    subnetEnd: $('#subnetEnd')[0].value
+                }).done(function (data) {
+                    console.log(data);
+                    $('#ip-table').text("");
+                    $('#arp-table').text("");
+                    socket.emit('start-poll', null);
+                });
+            });
+
+            $("#watch-start-btn").click(function() {
+                $.post("/watch", {
+                    action: "Start",
+                    ipaddress: $('#watchIpAddress')[0].value
+                }).done(function(data){
+                    console.log("watch started");
+                    $('#watch-light').addClass('active');
+                });
+            });
+
+            $("#watch-stop-btn").click(function () {
+                $.post("/watch", {
+                    action: "Stop",
+                    ipaddress: $('#watchIpAddress')[0].value
+                }).done(function (data) {
+                    console.log("watch stopped");
+                    $('#watch-light').removeClass('active');
+                });
             });
         });
     </script>

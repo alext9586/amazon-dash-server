@@ -1,11 +1,11 @@
 var app = require('express')();
+var bodyParser = require('body-parser');
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
 var cmd = require('node-cmd');
 var network = require('network');
-app.get('/', function (req, res) {
-    res.sendFile(__dirname + '/index.html');
-});
+app.use(bodyParser.json()); // support json encoded bodies
+app.use(bodyParser.urlencoded({ extended: true })); // support encoded bodies
 http.listen(3000, function () {
     console.log('listening on *:3000');
 });
@@ -27,14 +27,11 @@ var DashDetect = /** @class */ (function () {
         ];
         this.detectedMacAddr = [];
         this.maskedIp = "";
+        this.subnetStart = 0;
+        this.subnetEnd = 255;
+        this.watchEnd = false;
         var maskedIpLength = gatewayIp.lastIndexOf(".") + 1;
         this.maskedIp = gatewayIp.substr(0, maskedIpLength);
-        socket.on('connection', function (sock) {
-            sock.on('start-poll', function (msg) {
-                console.log("start pressed");
-                dashDetect.start();
-            });
-        });
     }
     DashDetect.prototype.isDashButton = function (macAddr) {
         return this.amazonMacAddr.some(function (amzMacAddr) {
@@ -63,26 +60,57 @@ var DashDetect = /** @class */ (function () {
             _this.socket.emit("arp-table", sb.join('\r\n'));
         });
     };
+    DashDetect.prototype.ping = function (ipaddress, tries, callback) {
+        cmd.get("ping " + ipaddress + " -w 1 -n " + tries, function (err, data, stderr) {
+            callback(err, data, stderr);
+        });
+    };
     DashDetect.prototype.checkPing = function (i) {
         var _this = this;
         var ipaddress = this.maskedIp + i;
-        cmd.get("ping " + ipaddress + " -n 1", function (err, data, stderr) {
+        this.ping(ipaddress, 3, function (err, data, stderr) {
             _this.socket.emit("ip-table", i + " of 255");
-            if (i === 255) {
+            if (i === _this.subnetEnd) {
                 setTimeout(function () {
                     _this.socket.emit("ip-table", "Ping Sweep Complete");
                     _this.poll();
                 }, 500);
             }
         });
-        if (i < 255) {
+        if (i < this.subnetEnd) {
             setTimeout(function () {
                 _this.checkPing(i + 1);
-            }, 100);
+            }, 50);
         }
     };
+    DashDetect.prototype.setSubnetRange = function (start, end) {
+        this.subnetStart = start;
+        this.subnetEnd = end;
+    };
     DashDetect.prototype.start = function () {
-        this.checkPing(0);
+        this.checkPing(this.subnetStart);
+    };
+    DashDetect.prototype.watch = function (ipaddress) {
+        var _this = this;
+        this.ping(ipaddress, 1, function (err, data, stderr) {
+            var interval = 5;
+            if (data.toUpperCase().indexOf("REPLY") > 0) {
+                interval = 10000;
+                console.log("button pressed");
+                _this.socket.emit("dash-button-pressed", true);
+            }
+            if (_this.watchEnd) {
+                _this.watchEnd = false;
+            }
+            else {
+                setTimeout(function () {
+                    _this.watch(ipaddress);
+                }, interval);
+            }
+        });
+    };
+    DashDetect.prototype.endWatch = function () {
+        this.watchEnd = true;
     };
     return DashDetect;
 }());
@@ -93,38 +121,23 @@ network.get_gateway_ip(function (err, ip) {
         dashDetect = new DashDetect(io, ip);
     }
 });
-/* what the fuck
-https://github.com/oneillsp96/node-amazon-dash-button-windows
-*/
-// var Cap = require('cap').Cap,
-//     decoders = require('cap').decoders,
-//     PROTOCOL = decoders.PROTOCOL;
-// var c = new Cap(),
-//     device = Cap.findDevice(),
-//     filter = 'arp',
-//     bufSize = 10 * 1024 * 1024,
-//     buffer = new Buffer(65535);
-// var linkType = c.open(device, filter, bufSize, buffer);
-// c.setMinBytes && c.setMinBytes(0);
-// var just_emitted = {};
-// just_emitted = false;
-// c.on('packet', function (nbytes, trunc) {
-//     console.log('packet: length ' + nbytes + ' bytes, truncated? '
-//         + (trunc ? 'yes' : 'no'));
-//     if (linkType === 'ETHERNET') {
-//         var ret = decoders.Ethernet(buffer);
-//         // console.log("protocol: " + PROTOCOL.ETHERNET[ret.info.type]);
-//         if (ret.info.type === PROTOCOL.ETHERNET.ARP) {
-//             // console.log('Decoding ARP ...');
-//             // console.log("srcmac " + ret.info.srcmac);
-//         }
-//         if (ret.info.srcmac === "44:65:0d:0d:70:73") {
-//             if (!just_emitted) {
-//                 console.log("amazon dash button pressed");
-//                 just_emitted = true;
-//                 setTimeout(function () { just_emitted = false; }, 3000); //sometimes one click triggers 2 or more ARP requests, this prevents multiple actions taking placep
-//             }
-//         }
-//     }
-// }); 
+app.get('/', function (req, res) {
+    res.sendFile(__dirname + '/index.html');
+});
+app.post('/start', function (req, res) {
+    dashDetect.setSubnetRange(+req.body.subnetStart, +req.body.subnetEnd);
+    dashDetect.start();
+    res.send("Started");
+});
+app.post('/watch', function (req, res) {
+    var action = req.body.action.toUpperCase();
+    if (action === "START") {
+        var ipaddress = req.body.ipaddress;
+        dashDetect.watch(ipaddress);
+    }
+    else {
+        dashDetect.endWatch();
+    }
+    res.send("Watch Success");
+});
 //# sourceMappingURL=app.js.map
