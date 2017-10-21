@@ -9,6 +9,9 @@ app.use(bodyParser.urlencoded({ extended: true })); // support encoded bodies
 http.listen(3000, function () {
     console.log('listening on *:3000');
 });
+io.on('connection', function (sock) {
+    sock.emit('connection-made', null);
+});
 var DashDetect = /** @class */ (function () {
     function DashDetect(socket, gatewayIp) {
         this.socket = socket;
@@ -38,26 +41,33 @@ var DashDetect = /** @class */ (function () {
             return macAddr.toUpperCase().indexOf(amzMacAddr) === 0;
         });
     };
-    DashDetect.prototype.poll = function () {
+    DashDetect.prototype.parseArpResult = function (data) {
         var _this = this;
-        cmd.get('arp -a', function (err, data, stderr) {
-            _this.detectedMacAddr = data.split("\r\n")
-                .map(function (item) { return item.trim(); })
-                .map(function (item) { return item.split(" ").filter(function (item) { return item.trim() !== ""; }); })
-                .filter(function (item) { return item.length === 3; })
-                .map(function (item) {
-                return {
-                    ipAddr: item[0],
-                    macAddr: item[1],
-                    isDashButton: _this.isDashButton(item[1])
-                };
-            })
-                .filter(function (item) { return item.ipAddr.indexOf(_this.maskedIp) !== -1; });
-            var sb = [];
-            _this.detectedMacAddr.forEach(function (item) {
-                sb.push(item.ipAddr + " : " + item.macAddr + " " + (item.isDashButton ? "<- Amazon Device" : ""));
-            });
-            _this.socket.emit("arp-table", sb.join('\r\n'));
+        return data.split("\r\n")
+            .map(function (item) { return item.trim(); })
+            .map(function (item) { return item.split(" ").filter(function (item) { return item.trim() !== ""; }); })
+            .filter(function (item) { return item.length === 3; })
+            .map(function (item) {
+            var subnetAddr = item[0].substr(item[0].lastIndexOf('.') + 1);
+            return {
+                subnetAddr: +subnetAddr,
+                ipAddr: item[0],
+                macAddr: item[1],
+                isDashButton: _this.isDashButton(item[1])
+            };
+        })
+            .filter(function (item) { return item.ipAddr.indexOf(_this.maskedIp) !== -1; });
+    };
+    DashDetect.prototype.displayArpTable = function () {
+        var sb = [];
+        this.detectedMacAddr.forEach(function (item) {
+            sb.push(item.ipAddr + " : " + item.macAddr + " " + (item.isDashButton ? "<- Amazon Device" : ""));
+        });
+        this.socket.emit("arp-table", sb.join('\r\n'));
+    };
+    DashDetect.prototype.doArp = function (callback, ipaddress) {
+        cmd.get("arp " + ipaddress + " -a", function (err, data, stderr) {
+            callback(err, data, stderr);
         });
     };
     DashDetect.prototype.ping = function (ipaddress, tries, callback) {
@@ -68,13 +78,34 @@ var DashDetect = /** @class */ (function () {
     DashDetect.prototype.checkPing = function (i) {
         var _this = this;
         var ipaddress = this.maskedIp + i;
-        this.ping(ipaddress, 3, function (err, data, stderr) {
-            _this.socket.emit("ip-table", i + " of 255");
+        var checkEndPing = function () {
             if (i === _this.subnetEnd) {
                 setTimeout(function () {
                     _this.socket.emit("ip-table", "Ping Sweep Complete");
-                    _this.poll();
+                    _this.detectedMacAddr.sort(function (a, b) {
+                        if (a.subnetAddr < b.subnetAddr)
+                            return -1;
+                        if (a.subnetAddr > b.subnetAddr)
+                            return 1;
+                        return 0;
+                    });
+                    _this.displayArpTable();
                 }, 500);
+            }
+        };
+        this.ping(ipaddress, 5, function (err, data, stderr) {
+            _this.socket.emit("ip-table", i + " of 255");
+            if (data.toUpperCase().indexOf("REPLY")) {
+                _this.doArp(function (err, data, stderr) {
+                    var parsedData = _this.parseArpResult(data);
+                    if (parsedData[0]) {
+                        _this.detectedMacAddr.push(parsedData[0]);
+                    }
+                    checkEndPing();
+                }, ipaddress);
+            }
+            else {
+                checkEndPing();
             }
         });
         if (i < this.subnetEnd) {
@@ -88,13 +119,15 @@ var DashDetect = /** @class */ (function () {
         this.subnetEnd = end;
     };
     DashDetect.prototype.start = function () {
+        this.socket.emit("ip-table", "Starting Ping Sweep...");
+        this.detectedMacAddr = [];
         this.checkPing(this.subnetStart);
     };
     DashDetect.prototype.watch = function (ipaddress) {
         var _this = this;
         this.ping(ipaddress, 1, function (err, data, stderr) {
             var interval = 5;
-            if (data.toUpperCase().indexOf("REPLY") > 0) {
+            if (data.toUpperCase().indexOf("BYTES=") > 0) {
                 interval = 10000;
                 console.log("button pressed");
                 _this.socket.emit("dash-button-pressed", true);
@@ -124,10 +157,10 @@ network.get_gateway_ip(function (err, ip) {
 app.get('/', function (req, res) {
     res.sendFile(__dirname + '/index.html');
 });
-app.post('/start', function (req, res) {
-    dashDetect.setSubnetRange(+req.body.subnetStart, +req.body.subnetEnd);
+app.post('/scan', function (req, res) {
+    dashDetect.setSubnetRange((+req.body.subnetStart || 0), (+req.body.subnetEnd || 255));
     dashDetect.start();
-    res.send("Started");
+    res.send("Scan Started");
 });
 app.post('/watch', function (req, res) {
     var action = req.body.action.toUpperCase();

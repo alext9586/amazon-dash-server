@@ -12,9 +12,15 @@ http.listen(3000, () => {
     console.log('listening on *:3000');
 });
 
+io.on('connection', (sock) => {
+    sock.emit('connection-made', null);
+});
+
+
 // https://github.com/fiveseven808/AmazonDashButtonHack/blob/master/src/AmazonButton_Discovery_160715_2304.ahk
 
 interface IArp {
+    subnetAddr: number;
     ipAddr: string;
     macAddr: string;
     isDashButton: boolean;
@@ -51,28 +57,37 @@ class DashDetect{
         });
     }
 
-    private poll(): void {
-        cmd.get(
-            'arp -a',
-            (err, data, stderr) => {
-                this.detectedMacAddr = data.split("\r\n")
-                    .map(item => item.trim())
-                    .map(item => item.split(" ").filter(item => item.trim() !== ""))
-                    .filter(item => item.length === 3)
-                    .map((item) => {
-                        return <IArp>{
-                            ipAddr: item[0],
-                            macAddr: item[1],
-                            isDashButton: this.isDashButton(item[1])
-                        }
-                    })
-                    .filter(item => item.ipAddr.indexOf(this.maskedIp) !== -1);
+    private parseArpResult(data: string): IArp[] {
+        return data.split("\r\n")
+            .map(item => item.trim())
+            .map(item => item.split(" ").filter(item => item.trim() !== ""))
+            .filter(item => item.length === 3)
+            .map((item) => {
+                var subnetAddr = item[0].substr(item[0].lastIndexOf('.') + 1);
+                return <IArp>{
+                    subnetAddr: +subnetAddr,
+                    ipAddr: item[0],
+                    macAddr: item[1],
+                    isDashButton: this.isDashButton(item[1])
+                }
+            })
+            .filter(item => item.ipAddr.indexOf(this.maskedIp) !== -1);
+    }
 
-                var sb: string[] = [];
-                this.detectedMacAddr.forEach((item) => {
-                    sb.push(`${item.ipAddr} : ${item.macAddr} ${item.isDashButton ? "<- Amazon Device" : ""}`)
-                });
-                this.socket.emit("arp-table", sb.join('\r\n'));
+    private displayArpTable(): void {
+        var sb: string[] = [];
+        this.detectedMacAddr.forEach((item) => {
+            sb.push(`${item.ipAddr} : ${item.macAddr} ${item.isDashButton ? "<- Amazon Device" : ""}`)
+        });
+
+        this.socket.emit("arp-table", sb.join('\r\n'));
+    }
+
+    private doArp(callback: Function, ipaddress?: string): void {
+        cmd.get(
+            `arp ${ipaddress} -a`,
+            (err, data, stderr) => {
+                callback(err, data, stderr);
             }
         );
     }
@@ -88,14 +103,39 @@ class DashDetect{
 
     private checkPing(i): void {
         var ipaddress = this.maskedIp + i;
-        this.ping(ipaddress, 3, (err, data, stderr) => {
-            this.socket.emit("ip-table", i + " of 255");
+
+        var checkEndPing = () => {
             if (i === this.subnetEnd) {
                 setTimeout(() => {
                     this.socket.emit("ip-table", "Ping Sweep Complete");
-                    this.poll();
+                    this.detectedMacAddr.sort((a, b) => {
+                        if (a.subnetAddr < b.subnetAddr)
+                            return -1;
+                        
+                        if (a.subnetAddr > b.subnetAddr)
+                            return 1;
+                        
+                        return 0;
+                    });
+                    this.displayArpTable();
                 }, 500);
             }
+        };
+
+        this.ping(ipaddress, 5, (err, data, stderr) => {
+            this.socket.emit("ip-table", i + " of 255");
+            if (data.toUpperCase().indexOf("REPLY")) {
+                this.doArp((err, data, stderr) => {
+                    var parsedData = this.parseArpResult(data);
+                    if (parsedData[0]) {
+                        this.detectedMacAddr.push(parsedData[0]);
+                    }    
+                    checkEndPing();
+                }, ipaddress);
+            } else {
+                checkEndPing();
+            }
+            
         });
 
         if (i < this.subnetEnd) {
@@ -111,6 +151,8 @@ class DashDetect{
     }
 
     public start(): void {
+        this.socket.emit("ip-table", "Starting Ping Sweep...");
+        this.detectedMacAddr = [];
         this.checkPing(this.subnetStart);
     }
 
@@ -118,7 +160,7 @@ class DashDetect{
         this.ping(ipaddress, 1, (err, data, stderr) => {
             var interval = 5;
             
-            if (data.toUpperCase().indexOf("REPLY") > 0) {
+            if (data.toUpperCase().indexOf("BYTES=") > 0) {
                 interval = 10000;
                 console.log("button pressed");
                 this.socket.emit("dash-button-pressed", true);
@@ -152,10 +194,10 @@ app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
-app.post('/start', function (req, res) {
-    dashDetect.setSubnetRange(+req.body.subnetStart, +req.body.subnetEnd);
+app.post('/scan', function (req, res) {
+    dashDetect.setSubnetRange((+req.body.subnetStart || 0), (+req.body.subnetEnd || 255));
     dashDetect.start();
-    res.send("Started");
+    res.send("Scan Started");
 });
 
 app.post('/watch', function (req, res) {
